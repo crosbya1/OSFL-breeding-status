@@ -1,0 +1,370 @@
+---
+title: "Model development"
+author: "Andrew Crosby"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))  #Sets the working directory to the project folder
+```
+
+
+```{r, echo = F, results = F, warning = F, message = F}
+
+rm(list=ls(all=T))
+getwd()
+
+# Load required package
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(jagsUI)
+
+```
+
+
+```{r bring-in-data, echo = F, results = F}
+
+counts <- read.csv("0_data/raw/songcounts_22March2021.csv")
+
+length(table(as.factor(counts$ARU_ID)))
+
+counts$SS <- paste0(counts$ARU_ID, "-", counts$year)
+length(table(as.factor(counts$SS)))
+
+counts$pkey <- paste0(counts$ARU_ID, "-", counts$year, "-", counts$JDate)
+
+
+```
+
+
+Data consists of `r nrow(counts)` song counts done within `r length(table(as.factor(counts$ARU_ID)))`, covering `r length(table(as.factor(counts$SS)))` territory-year combinations. Automated recording units (ARU) were placed within territories, and territories were monitored regularly by observers so that breeding status was known for all days that ARU samples were analyized. To sample singing rates, analysist sampled $\ge$ 1 2-minute sampling period (daily sub-samples) on days for which breeding status was know, and used visual scanning to record the number of OSFL calls heard within six consecutive 20-second sampling frames. 
+
+We removed territories where birds were heard on < 30% of visits, assuming these birds were either not actively defending territories, or the ARU was not located at a place within the territory to sufficiently capture singing activity.  
+
+The ecological process model assumed that breeding status was a function of Julian day, where breeding status could be one of: single, paired, or feeding young. We considered each bird-day combination to be an independent sample, and so the breeding status model was: $$BS_i \sim multinomial(\mathbf{p}_{i, 1:3}),$$ where $BS_i$ is the breeding status of bird-day *i*, and $\mathbf{p}_{i, 1:3}$ is the vector of probabilities for each breeding category. Each probability, $\alpha$ was $log(\alpha)=\eta+\eta_1JDay$, where the $\eta$'s are the vector of coefficients and JDay is Julian day. 
+
+Our observation model connceted singing rate to breeding status, so that song count within a given period of time on bird-day *i*, $N_i$, was $N_i \sim Poisson(\lambda_i)$, and $log(\lambda_i)=\beta_{0BS_i}+\beta_1Time$, where $\lambda_i$ is expected song count, $\beta_{0BS_i}$ is the coefficient for breeding status *i*, and Time is time relative to sunrise. Because mutliple subsamples were often taken on the same day, we created a separate observation model for each subsample, so that the song count for each bird-day *i* at subsample *j*, $N_{ij}$,  had a specific $\lambda_{ij}$ as a function of breeding status and time relative to sunrise. 
+
+Model code is below:
+```{r fixed-model, echo = F}
+
+sink("poisson_subDay.txt")
+cat("
+     
+# note: the order of breeding states is: FY, P, S
+
+model{
+  ### Likelihood
+  for (i in 1:N){
+
+    breedingstatus[i] ~ dcat(p[i,1:3]) 
+    for (j in 1:3){
+      p[i,j] <- delta[i,j]/sum(delta[i,])
+      log(delta[i,j]) = alpha[i,j]
+    }	
+    alpha[i,1] <- eta[1] + eta[4]*JDate[i]
+    alpha[i,2] <- eta[2]
+    alpha[i,3] <- eta[3] + eta[5]*JDate[i]
+	
+	  for(j in 1:nsamp[i]){
+	    y[i, j] ~ dpois(lambda[i, j]) 
+	    log(lambda[i, j]) <- beta0[breedingstatus[i]] + beta1*TimeRel2Sun[i, j]
+	    }
+    }
+  
+  # Priors
+  # etas are the log odds of each state (with paired as the reference here)
+  eta[1] ~ dnorm(0, 0.01)
+  eta[2] ~ dnorm(0, 1000)
+  eta[3] ~ dnorm(0, 0.01)
+  eta[4] ~ dnorm(0, 0.01)
+  eta[5] ~ dnorm(0, 0.01)
+  
+  # exp(beta0) is the expected song count (for each state)
+  beta0[1] ~ dnorm(beta0_FY, 0.01)
+  beta0[2] ~ dnorm(beta0_P, 0.01)
+  beta0[3] ~ dnorm(beta0_S, 0.01) 
+
+  beta1 ~ dnorm(beta_1, 0.01)
+}
+
+# FY, P, S
+
+", fill = TRUE)
+sink()
+
+
+```
+
+
+Model code for the model with a random effect of bird-year on detectiability
+
+```{r mixed-model, echo = F}
+
+sink("poisson_subDay_re.txt")
+cat("
+     
+# note: the order of breeding states is: FY, P, S
+
+model{
+  ### Likelihood
+  for (i in 1:N){
+
+    breedingstatus[i] ~ dcat(p[i,1:3]) 
+    for (j in 1:3){
+      p[i,j] <- delta[i,j]/sum(delta[i,])
+      log(delta[i,j]) = alpha[i,j]
+    }	
+    alpha[i,1] <- eta[1] + eta[4]*JDate[i]
+    alpha[i,2] <- eta[2]
+    alpha[i,3] <- eta[3] + eta[5]*JDate[i]
+	
+	  for(j in 1:nsamp[i]){
+	    y[i, j] ~ dpois(lambda[i, j]) 
+	    log(lambda[i, j]) <- beta0[breedingstatus[i]] + beta1*TimeRel2Sun[i, j] + eps.ss[ss[i]]
+	    }
+    }
+  
+  # Priors
+  # etas are the log odds of each state (with paired as the reference here)
+  eta[1] ~ dnorm(0, 0.01)
+  eta[2] ~ dnorm(0, 1000)
+  eta[3] ~ dnorm(0, 0.01)
+  eta[4] ~ dnorm(0, 0.01)
+  eta[5] ~ dnorm(0, 0.01)
+  
+  # exp(beta0) is the expected song count (for each state)
+  beta0[1] ~ dnorm(0, 0.01)
+  beta0[2] ~ dnorm(0, 0.01)
+  beta0[3] ~ dnorm(0, 0.01) 
+
+  beta1 ~ dnorm(0, 0.01)
+  
+  sd.ss ~ dunif(0, 5)
+  tau.ss <- pow(sd.ss, -2)
+  for(i in 1:n.ss){
+    eps.ss[i] ~ dnorm(0, tau.ss)
+	}
+}
+
+# FY, P, S
+
+", fill = TRUE)
+sink()
+
+
+```
+
+List of data needed for the poisson_subDay model:   
+* N: the number of idividual bird-days.   
+* y: a matrix where the rows are bird-day (counts$pkey), the columns are the sub-samples for that bird-day, and the values are the total number of counts for each sample. The number of columns = the maximum number of samples done in a single day. For bird-days with < the maximum, empty samples = NA.   
+* nsamp: a vector of length N of the number of samples done on each bird-day.   
+* breedingstatus: a vector of length N of the breeding status for each bird-day. 
+* TimeRel2Sun: a matrix of the same dimensions as y, where the value is the time relative to sunrise of sample[i, j].
+* Jday: a vector of length N, of the Julian day of each bird-day.  
+* ss: a vector of length N of the bird-day factor for the random effect.  
+* n.ss: the number of ss
+
+Format the data
+```{r format-data, echo = F, results = F, eval = F}
+
+
+# Calculate N, number of individual bird-days
+daily_sc <- counts %>% 
+  group_by(SS,JDate,pkey) %>%
+  summarize(n_samples_per_day = n(),
+            total_songs_per_day = sum(two_min_sc))
+
+daily_sc <- daily_sc %>% 
+  mutate(detected = ifelse(total_songs_per_day>0,1,0))
+
+detection_days <- daily_sc %>% 
+  group_by(SS) %>%
+  summarize(n_samples = n(),
+            days_detected = sum(detected))
+
+# Determine individuals to remove (birds detected on <30% of sample dates)
+detection_days <- detection_days %>% 
+  mutate(percent_detected = (round(days_detected/n_samples*100,1)))
+
+# Remove low detection birds from data set
+birds_low_det <- detection_days %>% 
+  filter(percent_detected<30)
+
+cut <- unique(birds_low_det$SS)
+
+counts <- counts %>% 
+  filter(!SS %in% cut)
+
+# Update bird-day summary values for trimmed data set (still called counts)
+daily_sc <- counts %>% 
+  group_by(SS,JDate,pkey,standardized_bs) %>%
+  summarize(n_samples_per_day = n(),
+            total_songs_per_day = sum(two_min_sc))
+
+daily_sc <- daily_sc %>% 
+  mutate(detected = ifelse(total_songs_per_day>0,1,0))
+
+detection_days <- daily_sc %>% 
+  group_by(SS) %>%
+  summarize(n_samples = n(),
+            days_detected = sum(detected))
+
+# Calculate time relative to sunrise (negative numbers mean 2 minute recording started before sunrise, positive means after)
+counts$sec_from_sunrise <- counts$BinStarts_sec_past_midn-counts$sunrise_sec_past_midn
+
+# Check range of recording start times (should be between 45 minutes before sunrise and 15 minutes after)
+min(counts$sec_from_sunrise)/60
+max(counts$sec_from_sunrise)/60
+# It seems that I have actually sampled from 47 minutes before sunrise until 13 minutes after sunrise...
+# aka sampled 2-minute periods where the end of the period lies within 45 mins before to 15 mins after sunrise
+
+# Create a counts data table (matrix where rows are bird-day, aka counts$pkey, columns are sub-samples for that bird-day, and values are total number of counts for each sample, using NA when sub-sample does not exist). Include the pkey as the unique identifier
+counts.survey <- rbindlist(lapply(1:nlevels(as.factor(counts$pkey)), function(x){
+  p <- levels(as.factor(counts$pkey))[x]
+  d <- data.table(counts[which(counts$pkey == p), ])
+  d$survey <- 1:nrow(d)
+  return(d)
+}))
+
+y <- spread(counts.survey[, c("pkey", "survey", "two_min_sc")], survey, two_min_sc)
+
+# Create the same matrix with time relative to sunrise
+TimeRel2Sun <- spread(counts.survey[, c("pkey", "survey", "sec_from_sunrise")], survey, sec_from_sunrise)
+
+# Get Julian day for each survey
+Jday <- daily_sc[, c("pkey", "JDate")]
+
+bs <- daily_sc$standardized_bs
+
+all.equal(y$pkey, TimeRel2Sun$pkey, Jday$pkey, daily_sc$pkey)
+
+```
+
+Run the test model with no cross-validation or empirical priors
+```{r fit-models, eval = F}
+
+library(jagsUI)
+
+data <- list(N = nrow(y), breedingstatus = as.numeric(as.factor(daily_sc$standardized_bs)), nsamp = daily_sc$n_samples_per_day, y = y[, -1], JDate = Jday$JDate, TimeRel2Sun = TimeRel2Sun[, -1]/60/60, ss = as.numeric(as.factor(daily_sc$SS)), n.ss = nlevels(as.factor(daily_sc$SS)))
+
+params <- c("eta", "beta0", "beta1")
+
+system.time({
+  out <- jags(data = data, parameters.to.save = params, model.file = "1_scripts/model_scripts/poisson_subDay.txt", n.chains = 3, n.iter = 10000, n.burnin = 1000, n.thin = 1, parallel = T)
+})
+
+
+params.re <- c("eta", "beta0", "beta1", "sd.ss", "eps.ss", "breedingstatus")
+
+
+system.time({
+  out.re <- jags(data = data, parameters.to.save = params.re, model.file = "1_scripts/model_scripts/poisson_subDay_re.txt", n.chains = 3, n.iter = 100, n.burnin = 10, n.thin = 1, parallel = T)
+})
+
+save(out, out.re, file = "2_pipeline/temp/preliminary_models.Rdata")
+
+
+```
+
+The output from the fixed-effects model
+```{r print-fixed-output, echo = F}
+load("2_pipeline/temp/preliminary_models.Rdata")
+
+out
+
+```
+
+The output from the mixed-effects model, with a random effect of SS on detectability. 
+```{r, print-re-out, echo = F}
+out.re
+```
+
+
+Run the zero-inflated model
+
+```{r mixed-model, echo = F}
+
+sink("poisson_subDay_re_zip.txt")
+cat("
+     
+# note: the order of breeding states is: FY, P, S
+
+model{
+  ### Likelihood
+  for (i in 1:N){
+
+    breedingstatus[i] ~ dcat(p[i,1:3]) 
+    for (j in 1:3){
+      p[i,j] <- delta[i,j]/sum(delta[i,])
+      log(delta[i,j]) = alpha[i,j]
+    }	
+    alpha[i,1] <- eta[1] + eta[4]*JDate[i]
+    alpha[i,2] <- eta[2]
+    alpha[i,3] <- eta[3] + eta[5]*JDate[i]
+	
+	  for(j in 1:nsamp[i]){
+	    z[i, j] ~ dbern(psi)
+	    y[i, j] ~ dpois(lambda[i, j]*z[i, j]) 
+	    log(lambda[i, j]) <- beta0[breedingstatus[i]] + beta1*TimeRel2Sun[i, j] + eps.ss[ss[i]]
+	    }
+    }
+  
+  # Priors
+  # etas are the log odds of each state (with paired as the reference here)
+  eta[1] ~ dnorm(0, 0.01)
+  eta[2] ~ dnorm(0, 1000)
+  eta[3] ~ dnorm(0, 0.01)
+  eta[4] ~ dnorm(0, 0.01)
+  eta[5] ~ dnorm(0, 0.01)
+  
+  # exp(beta0) is the expected song count (for each state)
+  beta0[1] ~ dnorm(0, 0.01)
+  beta0[2] ~ dnorm(0, 0.01)
+  beta0[3] ~ dnorm(0, 0.01) 
+
+  beta1 ~ dnorm(0, 0.01)
+  
+  psi ~ dunif(0, 1)
+  
+  sd.ss ~ dunif(0, 5)
+  tau.ss <- pow(sd.ss, -2)
+  for(i in 1:n.ss){
+    eps.ss[i] ~ dnorm(0, tau.ss)
+	}
+}
+
+# FY, P, S
+
+", fill = TRUE)
+sink()
+
+
+```
+
+
+
+```{r}
+
+
+data <- list(N = nrow(y), breedingstatus = as.numeric(as.factor(daily_sc$standardized_bs)), nsamp = daily_sc$n_samples_per_day, y = y[, -1], JDate = Jday$JDate, TimeRel2Sun = TimeRel2Sun[, -1]/60/60, ss = as.numeric(as.factor(daily_sc$SS)), n.ss = nlevels(as.factor(daily_sc$SS)))
+
+
+params.re <- c("eta", "beta0", "beta1", "sd.ss", "eps.ss", "breedingstatus")
+
+zinit <- y
+zinit[zinit > 1] <- 1
+inits <- function(){list(z = zinit)}
+
+
+system.time({
+  out.re <- jags(data = data, inits = inits, parameters.to.save = params.re, model.file = "1_scripts/model_scripts/poisson_subDay_re_zip.txt", n.chains = 3, n.iter = 100, n.burnin = 10, n.thin = 1, parallel = T)
+})
+
+
+```
+
