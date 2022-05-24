@@ -14,10 +14,10 @@ library(data.table)
 
 counts <- read.csv("0_data/raw/songcounts_22March2021.csv")
 
-length(table(as.factor(counts$ARU_ID)))
+length(table(as.factor(counts$ARU_ID))) # The number of territories
 
 counts$SS <- paste0(counts$ARU_ID, "-", counts$year)
-length(table(as.factor(counts$SS)))
+length(table(as.factor(counts$SS))) # The number of territory-years 
 
 counts$pkey <- paste0(counts$ARU_ID, "-", counts$year, "-", counts$JDate)
 
