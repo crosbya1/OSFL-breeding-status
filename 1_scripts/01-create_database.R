@@ -19,6 +19,8 @@ length(table(as.factor(counts$ARU_ID))) # The number of territories
 counts$SS <- paste0(counts$ARU_ID, "-", counts$year)
 length(table(as.factor(counts$SS))) # The number of territory-years 
 
+counts$standardized_bs <- factor(counts$standardized_bs, levels = c("Feeding Young", "Paired", "Single"))
+
 counts$pkey <- paste0(counts$ARU_ID, "-", counts$year, "-", counts$JDate)
 
 

@@ -36,7 +36,7 @@ model{
 
   beta1 ~ dnorm(0, 0.01)
   
-  r ~ dunif(0, 50)
+  r ~ dunif(0, 20)
 }
 
 
