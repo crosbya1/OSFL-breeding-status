@@ -26,20 +26,32 @@ mod.comp <- function(model){
     prop.lik <- model[[x]]$loglik.prop
     return(c(mod.lik, prop.lik))
   }))
-  r <- colMeans(ml)
+  r <- sapply(1:ncol(ml), function(x) mean(ml[, x][is.finite(ml[, x])]))
   names(r) <- c("mod.lik", "prop.lik")
   return(r)
+  gc()
 }
 
 d <- "2_pipeline/store"
-ls <- list.files(d)
+ls <- list.files(d, pattern = ".Rdata")
 
-mod.comp.table <- lapply(1:length(ls), function(x){
+mod.comp.table <- do.call(rbind, lapply(1:length(ls), function(x){
   load(file.path(d, ls[x]))
   t <- get(strsplit(ls[x], "\\.")[[1]][1])
   m <- mod.comp(t)
   return(m)
+  gc()
+}))
+rownames(mod.comp.table) <- sapply(1:length(ls), function(x){
+  n <- strsplit(strsplit(ls[x], "\\.")[[1]][1], "\\_")[[1]][1:2]
+  n1 <- paste0(n[1], "_", n[2])
 })
+
+print(mod.comp.table, dig = 3)
+
+saveRDS(mod.comp.table, file = "2_pipeline/store/mod_comp_table.rds")
+
+
 
 
 

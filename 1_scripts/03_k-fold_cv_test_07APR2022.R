@@ -55,27 +55,23 @@ data <- list(N = nrow(y.dat), breedingstatus = as.numeric(as.factor(sc.dat$stand
              nsamp = sc.dat$n_samples_per_day, y = y.dat[, -1], JDate = j.dat$jday, JDate2 = j.dat$jday2, 
              TimeRel2Sun = t.dat[, -1]/60/60, ss = as.numeric(as.factor(sc.dat$SS)), n.ss = nlevels(as.factor(sc.dat$SS)))
 
+# params <- c("eta", "beta0", "beta1", paste('breedingstatus[',nrow(sc.dat)-ntest+1,':',nrow(sc.dat),']',sep=""))  # model parameters to be monitored
 
+# params <- c("eta", "beta0", "beta1", "p")
 
-params <- c("eta", "beta0", "beta1", paste("p[", nrow(sc.dat)-ntest+1, ":", nrow(sc.dat), ",1:3]", sep = ""), 
-            paste('breedingstatus[',nrow(sc.dat)-ntest+1,':',nrow(sc.dat),']',sep=""))
+params <- c("eta", "beta0", "beta1", paste("p[", nrow(sc.dat)-ntest+1, ":", nrow(sc.dat), ",1:3]", sep = ""))
 
-
-ni = 50000
-nb = 30000
-nt = 5
+ni = 20000
+nb - 15000
 
 system.time({
   out <- jags(data = data, parameters.to.save = params, 
-              model.file = "1_scripts/model-scripts/negbinom_basic.txt", n.chains = nc, n.iter = ni, 
+              model.file = "1_scripts/model-scripts/poisson_basic.txt", n.chains = nc, n.iter = ni, 
               n.burnin = nb, n.thin = nt, parallel = T)
 })
 #Full convergence in ~15 minutes with 20k iterations
 
-negbinom_basic_cv <- lapply(1:k, function(i){
-  
-  print(paste0("************************* Fold ", i, " *********************"))
-  
+poisson_basic_cv <- lapply(1:k, function(i){
   train <- which(leavout != i)
   test <- which(leavout == i)
   
@@ -96,31 +92,28 @@ negbinom_basic_cv <- lapply(1:k, function(i){
   t.dat <- rbind(t.train, TimeRel2Sun[test, ])
   
   ntest <- length(test)
-  ntrain <- length(train)
   
   # Run the basic version of the model
   data <- list(N = nrow(y.dat), breedingstatus = as.numeric(as.factor(sc.dat$standardized_bs)), 
                nsamp = sc.dat$n_samples_per_day, y = y.dat[, -1], JDate = j.dat$jday, JDate2 = j.dat$jday2, 
                TimeRel2Sun = t.dat[, -1]/60/60, ss = as.numeric(as.factor(sc.dat$SS)), n.ss = nlevels(as.factor(sc.dat$SS)))
   
+  params <- c("eta", "beta0", "beta1", paste('breedingstatus[',nrow(sc.dat)-ntest+1,':',nrow(sc.dat),']',sep=""))  # model parameters to be monitored
   
-  
-  params <- c("eta", "beta0", "beta1", "r", paste("p[", nrow(sc.dat)-ntest+1, ":", nrow(sc.dat), ",1:3]", sep = ""), 
-              paste('breedingstatus[',nrow(sc.dat)-ntest+1,':',nrow(sc.dat),']',sep=""))
+  params <- c("eta", "beta0", "beta1", "p")
+
+  params <- c("eta", "beta0", "beta1", paste("p[", nrow(sc.dat)-ntest+1, ":", nrow(sc.dat), ",1:3]", sep = ""))
   
   
   
   system.time({
     out <- jags(data = data, parameters.to.save = params, 
-                model.file = "1_scripts/model-scripts/negbinom_basic.txt", n.chains = nc, n.iter = ni, 
-                n.burnin = nb, n.thin = nt, parallel = T)
+                              model.file = "1_scripts/model-scripts/poisson_basic.txt", n.chains = nc, n.iter = ni, 
+                              n.burnin = nb, n.thin = nt, parallel = T)
   })
   
   # Retrieve the values we need 
-  
-  pr <- out$sims.list$r
-  
-  loglik.birdday <- for(iter in 1:nrow(out$sims.list$p)){
+  loglik.birdday <- lapply(1:nrow(out$sims.list$p), function(iter){
     # Calculate the probabilities of being in each breeding status
     p.test <- (nrow(sc.dat)-ntest+1):nrow(sc.dat)
     pb <- out$sims.list$p[iter, p.test, ]
@@ -134,13 +127,13 @@ negbinom_basic_cv <- lapply(1:k, function(i){
       return(lam)
     })
     
-    lik.bd <- for(t in 1:length(lam.test)){
+    lik.bd <- lapply(1:length(lam.test), function(t){
       # likelihood of survey-specific predictions, given the data and model predictions
       lik <- do.call(rbind, lapply(1:nrow(lam.test[[t]]), function(k){
         # Probability of the song count data, given expected song counts from the model, for each breeding status
-        pl <- dnbinom(setDF(data$y)[p.test[t], k], size = pr[iter], mu = lam.test[[t]][k, ])
+        pl <- dpois(setDF(data$y)[p.test[t], k], lam.test[[t]][k, ])
         # Probability of each breeding status, given model predictions (Equation 1 in the manuscript)
-        pbs <- pl*pb[t, ]/sum(pl*pb[t, ])
+        pbs <- pl*pb[t]/sum(pl*pb[t])
         return(pbs)
       }))
       b <- rep(0, 3)
@@ -149,10 +142,10 @@ negbinom_basic_cv <- lapply(1:k, function(i){
       # Sum the log likelihoods of data|model for each survey in a day 
       lik.day <- sum(sapply(1:nrow(lik), function(l) dmultinom(b, prob = lik[l, ], log = TRUE)))
       # For each test bird-day, return the joint breeding status/singing probabilities (lik), the actual breeding status data (b), and the bird-day log likelihood (lik.day)
-      #return(list(lik = lik, b = b, lik.day = lik.day))
-    }
-    #return(lik.bd)
-  }
+      return(list(lik = lik, b = b, lik.day = lik.day))
+    })
+    return(lik.bd)
+  })
   
   # Get the full model likelihood as the sum of bird-day likelihoods (lik.day) averaged over all iterations
   modlik.birdday <- mean(sapply(1:length(loglik.birdday), function(i){
@@ -173,34 +166,9 @@ negbinom_basic_cv <- lapply(1:k, function(i){
   
   loglik.prop <- mean(-2*sapply(1:length(bs.pred), function(i) dmultinom(colSums(dta.bs), prob = colMeans(bs.pred[[i]]), log = TRUE)))
   
-  Props <- matrix(nrow = ntest, ncol = 3) # to save proportions from traces
-  Predicted <- matrix(nrow = ntest) # to save predicted from highest proportion
-  
-  for(t in 1:ntest){  # for each test bird-day
-    for(l in 1:3){  # for each breeding status (FY, P, S)
-      if(ntest == 1){ # if ntestDat = 1, dimensions of vectors just require changed syntax
-        Props[t,l] = sum(out.vals == l)/length(out.vals)
-      }else{
-        Props[t,l] = sum(out$sims.list$breedingstatus[, (t + ntrain)] == l)/nrow(out$sims.list$breedingstatus)
-      }
-    }
-    Predicted[t] = which(Props[t,] == max(Props[t,]))
-  } 
-  
-  #put into data frame of all predictions ######
-  Predicted[which(Predicted == 1)] <- "Feeding Young"
-  Predicted[which(Predicted == 2)] <- "Paired"
-  Predicted[which(Predicted == 3)] <- "Single"
-  Predicted <- factor(Predicted, levels = c("Feeding Young", "Paired", "Single")) # reorder factor levels
-  
-  # Predicted <- as.factor(Predicted)
-  df.temp <- data.frame(sc.test[, c("SS", "total_songs_per_day", "data_bs", "JDate")], Predicted, Props)
-  colnames(df.temp) <- c("birdID", "totalSongsPerDay", "breedingStatus", "JDate","Predicted","Prob.FY","Prob.P","Prob.S")
-  
-  
-  return(list(out = out, df = df.temp, loglik.birdday = loglik.birdday, modlik.birdday = modlik.birdday, dta.bs = dta.bs, bs.pred = bs.pred, loglik.prop = loglik.prop))
-  
+  return(list(out = out, loglik.birdday = loglik.birdday, modlik.birdday = modlik.birdday, dta.bs = dta.bs, bs.pred = bs.pred, loglik.prop = loglik.prop))
+    
 })
-
+  
 modsum <- do.call(rbind, lapply(1:length(poisson_basic_cv), function(x) data.frame(modlik = poisson_basic_cv[[x]]$modlik.birdday, proplik = poisson_basic_cv[[x]]$loglik.prop)))
 score <- colMeans(modsum)
