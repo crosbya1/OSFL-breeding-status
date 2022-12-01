@@ -1,0 +1,25 @@
+---
+title: "Likelihood calculation"
+author: "Andrew Crosby"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+knitr::opts_knit$set(root.dir = normalizePath(".."))  #Sets the working directory to the project folder
+```
+
+
+
+We evaluated out-of-sample (OOS) predictive ability in two ways. The first method looked at survey-specific predictive ability. For each saved draw from the posterior distribution, we calculated the expected song count for each breeding status at each survey. We then calculated the probability of getting the observed song count, given the expected song count for each breeding status as $$P(SC|BS_i, T_j),$$ where $SC$ is the observed song count, $BS_i$ is breeding status $i$, and $T_j$ is time relative to sunrise at survey $j$. Next, we multipled these probabilities by the probability of being in each breeding status, calculated as $$\mathbf{P(BS_i|D_j)},$$ where $D_j$ is the Julian day at survey $j$, and $\mathbf{P(BS_i)}$ is the vector of probabilites of being in each breeding status. These products represented the estimated probability of the bird being in each breeding status at survey $j$, conditional on song rate, Julian day, and time relative to sunrise (Equation 1 in manuscript). Finally, we caluclated the log likelihood of the data given the models as the probability of the observed breeding status given the estimated probability of being in each breeding status, and summed these across all test surveys. 
+
+The model likelihood score for each cross validation fold, based on this method, was the sum of the survey likelihoods averaged over all draws from the posterior distribution, so that: $$L_{log}=\frac{1}{s}\sum_{s=1}^S-2\left( \sum_{j=1}^Jlog(P(y_j|\mathbf{P[BS_j]}))\right),$$ where $y_j$ is the observed breeding status at survey $j$, $\mathbf{P[BS_j]}$ is the vector of expected probabilities for each breeding status at survey $j$, and $s$ is the individual draw from the posterior distribution.  
+
+In the second method, we calculated the liklihood of the observed proporiton of bird-days in each breeding status, given the expected proporiton of bird-days in each breeding status from the model at each draw from the posterior distribution. We estimated the breeding status at each survey as $$BS_j\sim Multinomial(\mathbf{P[BS_j]}),$$ where $BS_j$ is the breeding status at survey $j$ as a random draw from the multinomial distribution. If the test data contained multiple surveys for the same bird-day (as was usually the case), we estiamted $BS_j$ for each survey and calculated the vector of breeding status probabilities for bird-day $d$ as $$\mathbf{P[BS_d]}=\frac{1}{\sum_{J_d}}\sum_{j=1}^J{\mathbf{E(BS_j)}},$$ where $\sum_{J_d}$ is the number of surveys conducted on day $d$. As with $E(BS_j)$, we estimated breeding status on day $d$ as  $$E(BS_d)\sim Multinomial(\mathbf{P[BS_d]}).$$ 
+
+The model likelihood score for each cross validation fold, based on proportion of bird-days in each breeding status, was the probability of the number of observed breeding statuses in each category, given the expectations from the model, as $$P(BS_{oos}|\mathbf{P[BS]}),$$ where $\mathbf{P[BS]}$ is the vector of probabilities for each breeding status calculated as the estimated proportion of bird-days in each status from the model, averaged over all draws from the posterior distribution. Thus: $$L_{log}=\frac{1}{s}\sum_{s=1}^S-2log(P(BS_{oos}|\mathbf{P[BS]})).$$
+
+
+

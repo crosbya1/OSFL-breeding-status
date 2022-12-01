@@ -49,7 +49,7 @@ rownames(mod.comp.table) <- sapply(1:length(ls), function(x){
 
 print(mod.comp.table, dig = 3)
 
-saveRDS(mod.comp.table, file = "2_pipeline/store/mod_comp_table.rds")
+saveRDS(mod.comp.table, file = "3_outputs/tables/mod_comp_table.rds")
 
 
 

@@ -1,6 +1,7 @@
 
 library(jagsUI)
 library(tidyverse)
+library(ggplot2)
 
 
 load("2_pipeline/store/nb-final-output.Rdata")
@@ -51,12 +52,14 @@ data.bs.long <- gather(data.bs.wide, status, obs, fy:s, factor_key = TRUE)
 data.bs.sum <- data.bs.long %>% group_by(status, bin) %>% dplyr::summarise(prop = mean(obs))
 
 
-ggplot(bs.plot.sum, aes(x = bin, y = prob, colour = status)) + 
+bs_prob_plot <- ggplot(bs.plot.sum, aes(x = bin, y = prob, colour = status)) + 
   geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.1) +
   geom_line() +
   geom_point() + geom_point(data = data.bs.sum, aes(x = bin, y = prop, colour = status), size = 5) + 
-  theme_bw() + xlab("Time period") + ylab("Proportion of \nsamples")
-
+  theme_bw() +labs(x = "Time period", y = "Proportion of \nsamples") + 
+  scale_colour_discrete(name = "Breeding \nstatus", labels = c("Feeding young", "Paired", "Single")) +
+  scale_x_continuous(breaks = seq(1,13,1)) +
+  theme(panel.grid = element_blank(), axis.title = element_text(size = 15))
 
 
 
